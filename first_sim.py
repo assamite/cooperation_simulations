@@ -15,10 +15,10 @@ from serializers import get_serializers
 
 
 class MapEnvironment(Environment):
-
+    """Environment for single node, single core.
+    """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        #self.name = "MapEnvironment"
 
     def update_maps(self, nmap):
         for agent in self.get_agents(addr=False):
@@ -26,6 +26,8 @@ class MapEnvironment(Environment):
 
 
 class MapEnvManager(EnvManager):
+    """Manager for single environment.
+    """
 
     @aiomas.expose
     def update_maps(self, nmap):
@@ -33,7 +35,8 @@ class MapEnvManager(EnvManager):
 
 
 class MapMultiEnvironment(MultiEnvironment):
-
+    """Environment for single node, multiple cores.
+    """
     def __init__(self, *args, **kwargs):
         self._map = kwargs.pop('map', None)
         self._n_agents = kwargs.pop('n_agents', 1000)
@@ -47,10 +50,12 @@ class MapMultiEnvironment(MultiEnvironment):
         self.ani = None
         #self.im_vmin = -self._n_agents
         #self.im_vmax = self._n_agents
-        self.im_vmin = -10
+        self.im_vmin = -int(np.sqrt(self._n_agents))
         self.im_vmax = int(np.sqrt(self._n_agents))
 
     async def update_maps(self, nmap):
+        """Update maps of this environment and all the agents in all the slave environments.
+        """
         self._map = nmap
         async def slave_task(addr, nmap):
             r_manager = await self.env.connect(addr, timeout=5)
@@ -108,13 +113,13 @@ class MapMultiEnvironment(MultiEnvironment):
         return ret
 
 
-addr = ('localhost', 5555)
+menv_addr = ('localhost', 5555)
 env_kwargs = {'extra_serializers': get_serializers(), 'codec': aiomas.MsgPack}
 
 map_size = 50
 n_agents = 1000
 agent_map = np.zeros((map_size, map_size))
-menv = MapMultiEnvironment(addr,
+menv = MapMultiEnvironment(menv_addr,
                            env_cls=Environment,
                            mgr_cls=MultiEnvManager,
                            logger=None,
