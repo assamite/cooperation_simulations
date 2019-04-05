@@ -36,6 +36,7 @@ class MapMultiEnvironment(MultiEnvironment):
 
     def __init__(self, *args, **kwargs):
         self._map = kwargs.pop('map', None)
+        self._n_agents = kwargs.pop('n_agents', 1000)
         super().__init__(*args, **kwargs)
 
         self.step = 0
@@ -44,6 +45,10 @@ class MapMultiEnvironment(MultiEnvironment):
         self.fig = None
         self.im = None
         self.ani = None
+        #self.im_vmin = -self._n_agents
+        #self.im_vmax = self._n_agents
+        self.im_vmin = -10
+        self.im_vmax = int(np.sqrt(self._n_agents))
 
     async def update_maps(self, nmap):
         self._map = nmap
@@ -60,7 +65,7 @@ class MapMultiEnvironment(MultiEnvironment):
 
     def write_map(self, iteration):
         fig, ax = plt.subplots()
-        ax.imshow(self._map)
+        ax.imshow(self._map, vmin=self.im_vmin, vmax=self.im_vmax, interpolation=None)
         ax.set_title("Map")
         fig.tight_layout()
         plt.axis('off')
@@ -73,7 +78,7 @@ class MapMultiEnvironment(MultiEnvironment):
         self.fig = plt.figure(figsize=(6, 6))
         plt.axis('off')
         plt.tight_layout()
-        self.im = plt.imshow(self._map, animated=True)
+        self.im = plt.imshow(self._map, vmin=self.im_vmin, vmax=self.im_vmax, interpolation=None, animated=True)
         self.ani = animation.FuncAnimation(self.fig, self.animation_step, interval=0, blit=True)
         plt.show()
 
@@ -85,7 +90,6 @@ class MapMultiEnvironment(MultiEnvironment):
             self.ani.event_source.stop()
         else:
             ret = run(self.trigger_all())
-
             self.im.set_data(self._map)
 
         print("Step {} in {:.4f} seconds.".format(self.step, time.monotonic()-t1))
@@ -94,17 +98,20 @@ class MapMultiEnvironment(MultiEnvironment):
     async def trigger_all(self, *args, **kwargs):
         kwargs['map'] = self._map
         ret = await super().trigger_all(*args, **kwargs)
-        self._map = np.zeros(self._map.shape)
+        self._map[:, :] = self.im_vmin
         for r in ret:
-            self._map[r] = 1
+            if self._map[r] <= 0:
+                self._map[r] = 1
+            else:
+                self._map[r] += 1
 
-        return self._map
+        return ret
 
 
 addr = ('localhost', 5555)
 env_kwargs = {'extra_serializers': get_serializers(), 'codec': aiomas.MsgPack}
 
-map_size = 200
+map_size = 50
 n_agents = 1000
 agent_map = np.zeros((map_size, map_size))
 menv = MapMultiEnvironment(addr,
@@ -112,6 +119,7 @@ menv = MapMultiEnvironment(addr,
                            mgr_cls=MultiEnvManager,
                            logger=None,
                            map=agent_map,
+                           n_agents=n_agents,
                            **env_kwargs)
 
 # Define slave environments and their arguments
@@ -145,20 +153,20 @@ t1 = time.monotonic()
 for _ in range(n_agents):
     agent_pos = (random.randrange(map_size), random.randrange(map_size))
     agent_map[agent_pos[0], agent_pos[1]] += 1
-    kwargs = {'pos': agent_pos, 'map': agent_map}
-    run(menv.spawn("agents:CooperationAgent", **kwargs))
+    agent_kwargs = {'pos': agent_pos, 'map': agent_map}
+    run(menv.spawn("agents:CooperationAgent", **agent_kwargs))
 
 print("Spawned {} in {:.3f} seconds.".format(n_agents, time.monotonic()-t1))
 #print(agent_map)
 run(menv.update_maps(agent_map))
 
 
-# Trigger all agents to act
+# Run the agent animation for a number of steps
 n_steps = 100
 
 t1 = time.monotonic()
 menv.run_animation(steps=n_steps)
-print("Actual average time per step: {:.3f}.".format((time.monotonic()-t1) / n_steps))
+#print("Actual average time per step: {:.3f}.".format((time.monotonic()-t1) / n_steps))
 
 # Destroy the environment to free the resources
 menv.destroy(as_coro=False)
