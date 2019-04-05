@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import random
 import time
@@ -82,6 +83,7 @@ class MapMultiEnvironment(MultiEnvironment):
 
         self.fig = plt.figure(figsize=(6, 6))
         plt.axis('off')
+        plt.title("The Agent Animation")
         plt.tight_layout()
         self.im = plt.imshow(self._map, vmin=self.im_vmin, vmax=self.im_vmax, interpolation=None, animated=True)
         self.ani = animation.FuncAnimation(self.fig, self.animation_step, interval=0, blit=True)
@@ -113,66 +115,79 @@ class MapMultiEnvironment(MultiEnvironment):
         return ret
 
 
-menv_addr = ('localhost', 5555)
-env_kwargs = {'extra_serializers': get_serializers(), 'codec': aiomas.MsgPack}
+if __name__ == "__main__":
+    desc = "Create the agent simulation utilising multiple cores. The environments are opened to ports 5555 and forward."
+    parser = argparse.ArgumentParser(description=desc)
+    parser.add_argument('--n_agents', dest='n_agents', type=int, default=1000,
+                        help='The number of agents. Defaults to 1000.')
+    parser.add_argument('--map_size', dest='map_size', default=50, type=int,
+                        help='The dimension size for the map. Defaults to 50.')
+    parser.add_argument('--n_slaves', dest='n_slaves', default=4, type=int,
+                        help="The number of slave environments.")
 
-map_size = 50
-n_agents = 1000
-agent_map = np.zeros((map_size, map_size))
-menv = MapMultiEnvironment(menv_addr,
-                           env_cls=Environment,
-                           mgr_cls=MultiEnvManager,
-                           logger=None,
-                           map=agent_map,
-                           n_agents=n_agents,
-                           **env_kwargs)
+    args = parser.parse_args()
+    map_size = args.map_size
+    n_agents = args.n_agents
+    n_slaves = args.n_slaves
 
-# Define slave environments and their arguments
-n_slaves = 4
-slave_addrs = [('localhost', 5556+i) for i in range(n_slaves)]
-slave_env_cls = MapEnvironment
-slave_mgr_cls = MapEnvManager
-slave_kwargs = [{'extra_serializers': get_serializers(), 'codec': aiomas.MsgPack} for _ in range(n_slaves)]
+    # Create the multi-environment (master environment)
+    menv_addr = ('localhost', 5555)
+    env_kwargs = {'extra_serializers': get_serializers(), 'codec': aiomas.MsgPack}
 
-# Spawn the actual slave environments
-run(menv.spawn_slaves(slave_addrs, slave_env_cls, slave_mgr_cls, slave_kwargs))
+    agent_map = np.zeros((map_size, map_size))
+    menv = MapMultiEnvironment(menv_addr,
+                               env_cls=Environment,
+                               mgr_cls=MultiEnvManager,
+                               logger=None,
+                               map=agent_map,
+                               n_agents=n_agents,
+                               **env_kwargs)
 
-# Wait that all the slaves are ready, if you need to do some other
-# preparation before environments' return True for their is_ready-method, then
-# change check_ready=False
-run(menv.wait_slaves(10, check_ready=True))
+    # Create the slave environments
+    slave_addrs = [('localhost', 5556+i) for i in range(n_slaves)]
+    slave_env_cls = MapEnvironment
+    slave_mgr_cls = MapEnvManager
+    slave_kwargs = [{'extra_serializers': get_serializers(), 'codec': aiomas.MsgPack} for _ in range(n_slaves)]
 
-# Set host managers for the slave environments
-ret = run(menv.set_host_managers())
+    # Spawn the actual slave environments
+    run(menv.spawn_slaves(slave_addrs, slave_env_cls, slave_mgr_cls, slave_kwargs))
 
-# Check that the multienvironment is ready (this double checks that the slaves are ready).
-ret = run(menv.is_ready())
+    # Wait that all the slaves are ready, if you need to do some other
+    # preparation before environments' return True for their is_ready-method, then
+    # change check_ready=False
+    run(menv.wait_slaves(10, check_ready=True))
 
-if not ret:
-    raise RuntimeWarning("Not all the slave environments report to be ready before continuing the execution.")
+    # Set host managers for the slave environments
+    ret = run(menv.set_host_managers())
 
-# Spawn the agents to slave environments.
-all_agent_pos = []
-tasks = []
-t1 = time.monotonic()
-for _ in range(n_agents):
-    agent_pos = (random.randrange(map_size), random.randrange(map_size))
-    agent_map[agent_pos[0], agent_pos[1]] += 1
-    agent_kwargs = {'pos': agent_pos, 'map': agent_map}
-    run(menv.spawn("agents:CooperationAgent", **agent_kwargs))
+    # Check that the multienvironment is ready (this double checks that the slaves are ready).
+    ret = run(menv.is_ready())
 
-print("Spawned {} in {:.3f} seconds.".format(n_agents, time.monotonic()-t1))
-#print(agent_map)
-run(menv.update_maps(agent_map))
+    if not ret:
+        raise RuntimeWarning("Not all the slave environments report to be ready before continuing the execution.")
+
+    # Spawn the agents to slave environments.
+    all_agent_pos = []
+    tasks = []
+    t1 = time.monotonic()
+    for _ in range(n_agents):
+        agent_pos = (random.randrange(map_size), random.randrange(map_size))
+        agent_map[agent_pos[0], agent_pos[1]] += 1
+        agent_kwargs = {'pos': agent_pos, 'map': agent_map}
+        run(menv.spawn("agents:CooperationAgent", **agent_kwargs))
+
+    print("Spawned {} in {:.3f} seconds.".format(n_agents, time.monotonic()-t1))
+    #print(agent_map)
+    run(menv.update_maps(agent_map))
 
 
-# Run the agent animation for a number of steps
-n_steps = 100
+    # Run the agent animation for a number of steps
+    n_steps = 100
 
-t1 = time.monotonic()
-menv.run_animation(steps=n_steps)
-#print("Actual average time per step: {:.3f}.".format((time.monotonic()-t1) / n_steps))
+    t1 = time.monotonic()
+    menv.run_animation(steps=n_steps)
+    #print("Actual average time per step: {:.3f}.".format((time.monotonic()-t1) / n_steps))
 
-# Destroy the environment to free the resources
-menv.destroy(as_coro=False)
+    # Destroy the environment to free the resources
+    menv.destroy(as_coro=False)
 
